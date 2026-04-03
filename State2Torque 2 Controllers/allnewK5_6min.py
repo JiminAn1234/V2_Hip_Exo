@@ -6,27 +6,23 @@ import tensorrt as trt
 from scipy.signal import butter, filtfilt
 from scipy import signal as sp_signal
 # from epicpower import actuation, utils
-
 # from Header_ICM20948_I2C import ICM20948_I2C_IMUs
 from Header_ICM20948_I2C_pcb2 import ICM20948_I2C_IMUs
 from Header_Mocap_trigger import Mocap_trigger
 import Jetson.GPIO as GPIO
-
 import can
 from epicpower_tmotorV3.actuator_group import ActuatorGroup
 from epicpower_tmotorV3.tmotor_v3 import TMotorV3
 
-
 # GPIO 설정 (main 함수에서 수행하도록 이동)
 output_pin = 7  # Jetson Board Pin 7
+trial_start_sec = 0
+target_duration_sec = 370
+target_time_range = 360
 
 # Trial setting
-# subject = 'OS_Test'  # Change this for different subjects
 subject = 'AB16'
-trial_name = f'{subject}_Test'  # Change this for different trials
-trial_start_sec = 5
-target_duration_sec = 125
-target_time_range = 120
+trial_name = f'{subject}'  # Change this for different trials\
 exo_ON = False
 
 # Trigger setting
@@ -40,9 +36,8 @@ trt_engine_path = '/home/metamobility2/Jimin/Trained Models IMUonly_fixed/OpenSi
 # trt_engine_path = '/home/metamobility2/Jimin/Trained Models IMUonly_fixed/OpenSim/DEP/OpenSim_ALL_DEP_RA/OpenSim_ALL_DEP_RA.trt'
 # trt_engine_path = '/home/metamobility2/Jimin/Trained Models IMUonly_fixed/OpenSim/DEP/OpenSim_ALL_DEP_RD/OpenSim_ALL_DEP_RD.trt'
 
-
 scale_factor_percent= 0
-desired_delay_ms = 310
+desired_delay_ms = 30
 
 scale_factor = scale_factor_percent/100
 delay_factor = int(desired_delay_ms/10 - 3)
@@ -740,7 +735,7 @@ def main():
         current_time = time.time() - start_time
         
         # 첫 번째 펄스
-        if current_time >= (5 + 2) and not first_pulse_sent:
+        if current_time >= 5 and not first_pulse_sent:
             send_gpio_pulse_start()
             first_pulse_sent = True
             first_pulse_end_time = current_time + 0.2  # 200ms 펄스 지속시간
@@ -753,7 +748,7 @@ def main():
             print("First pulse ended")
         
         # 두 번째 펄스
-        if current_time >= (5 + 2 + target_time_range) and not second_pulse_sent:
+        if current_time >= (5 + target_time_range) and not second_pulse_sent:
             send_gpio_pulse_start()
             second_pulse_sent = True
             second_pulse_end_time = current_time + 0.2  # 200ms 펄스 지속시간
