@@ -175,7 +175,7 @@ class TMotorV3(can.Listener):
     def set_torque(self, torque: float) -> None:
         torque = self.invert * torque
         self.data.commanded_torque = torque
-        self.data.commanded_position = 0
+        self.data.commanded_position = self.data.current_position
         self.data.commanded_velocity = 0
         self.data.kp = 0
         self.data.kd = 0

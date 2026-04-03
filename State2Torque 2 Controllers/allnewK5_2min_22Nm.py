@@ -693,17 +693,17 @@ def main():
         applied_torque_arr[:, -1] = filtered_torque_arr[:, -1]
         
         # 7. Send the torque command to the motors
-        if filtered_torque_arr[1, -1] > 5:
-            motor_cmd_val_L = 5
-        elif filtered_torque_arr[1, -1] < -5:
-            motor_cmd_val_L = -5
+        if filtered_torque_arr[1, -1] > 22:
+            motor_cmd_val_L = 22
+        elif filtered_torque_arr[1, -1] < -22:
+            motor_cmd_val_L = -22
         else:
             motor_cmd_val_L = filtered_torque_arr[1, -1]
         
-        if filtered_torque_arr[0, -1] > 5:
-            motor_cmd_val_R = 5
-        elif filtered_torque_arr[0, -1] < -5:
-            motor_cmd_val_R = -5
+        if filtered_torque_arr[0, -1] > 22:
+            motor_cmd_val_R = 22
+        elif filtered_torque_arr[0, -1] < -22:
+            motor_cmd_val_R = -22
         else:        
             motor_cmd_val_R = filtered_torque_arr[0, -1]
                     

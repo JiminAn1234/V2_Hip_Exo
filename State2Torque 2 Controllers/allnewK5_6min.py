@@ -17,7 +17,7 @@ from epicpower_tmotorV3.tmotor_v3 import TMotorV3
 # GPIO 설정 (main 함수에서 수행하도록 이동)
 output_pin = 7  # Jetson Board Pin 7
 trial_start_sec = 0
-target_duration_sec = 370
+target_duration_sec = 368
 target_time_range = 360
 
 # Trial setting
@@ -689,8 +689,22 @@ def main():
         applied_torque_arr[:, -1] = filtered_torque_arr[:, -1]
         
         # 7. Send the torque command to the motors        
-        motor_cmd_val_L = filtered_torque_arr[1, -1]
-        motor_cmd_val_R = filtered_torque_arr[0, -1]
+        # motor_cmd_val_L = filtered_torque_arr[1, -1]
+        # motor_cmd_val_R = filtered_torque_arr[0, -1]
+        
+        if filtered_torque_arr[1, -1] > 18:
+            motor_cmd_val_L = 18
+        elif filtered_torque_arr[1, -1] < -18:
+            motor_cmd_val_L = -18
+        else:
+            motor_cmd_val_L = filtered_torque_arr[1, -1]
+        
+        if filtered_torque_arr[0, -1] > 18:
+            motor_cmd_val_R = 18
+        elif filtered_torque_arr[0, -1] < -18:
+            motor_cmd_val_R = -18
+        else:        
+            motor_cmd_val_R = filtered_torque_arr[0, -1]
 
         if exo_ON == False: motor_cmd_val_L, motor_cmd_val_R = 0.0, 0.0 # use this for Exo off condition
 
@@ -701,8 +715,36 @@ def main():
         actual_motor_torque_R = -Exo.mtr_comms.get_torque(Exo.CAN_id_R)
 
 
-        # 8. Stack the data (that will be saved after the trial)
+        # GPIO 펄스 로직 추가
+        current_time = time.time() - start_time
+        
+        # 첫 번째 펄스
+        if current_time >= 3 and not first_pulse_sent:
+            send_gpio_pulse_start()
+            first_pulse_sent = True
+            first_pulse_end_time = current_time + 0.2  # 200ms 펄스 지속시간
+            print("First pulse started 2 seconds after mocap trigger")
+        
+        # 첫 번째 펄스 종료
+        if first_pulse_sent and first_pulse_end_time and current_time >= first_pulse_end_time:
+            send_gpio_pulse_end()
+            first_pulse_end_time = None
+            print("First pulse ended")
+        
+        # 두 번째 펄스
+        if current_time >= (3+ target_time_range) and not second_pulse_sent:
+            send_gpio_pulse_start()
+            second_pulse_sent = True
+            second_pulse_end_time = current_time + 0.2  # 200ms 펄스 지속시간
+            print("Second pulse started after 120 seconds")
 
+        # 두 번째 펄스 종료
+        if second_pulse_sent and second_pulse_end_time and current_time >= second_pulse_end_time:
+            send_gpio_pulse_end()
+            second_pulse_end_time = None
+            print("Second pulse ended")
+
+        # 8. Stack the data (that will be saved after the trial)
         data_to_save['mtr_cmd_R'].append(motor_cmd_val_R)        
         data_to_save['mtr_cmd_L'].append(motor_cmd_val_L)
         
@@ -728,39 +770,8 @@ def main():
         data_to_save['applied_torque_L'].append(applied_torque_arr[1, -1])
 
         data_to_save['actual_torque_R'].append(actual_motor_torque_R)            
-        data_to_save['actual_torque_L'].append(actual_motor_torque_L)
-
-
-        # GPIO 펄스 로직 추가
-        current_time = time.time() - start_time
+        data_to_save['actual_torque_L'].append(actual_motor_torque_L)        
         
-        # 첫 번째 펄스
-        if current_time >= 5 and not first_pulse_sent:
-            send_gpio_pulse_start()
-            first_pulse_sent = True
-            first_pulse_end_time = current_time + 0.2  # 200ms 펄스 지속시간
-            print("First pulse started 2 seconds after mocap trigger")
-        
-        # 첫 번째 펄스 종료
-        if first_pulse_sent and first_pulse_end_time and current_time >= first_pulse_end_time:
-            send_gpio_pulse_end()
-            first_pulse_end_time = None
-            print("First pulse ended")
-        
-        # 두 번째 펄스
-        if current_time >= (5 + target_time_range) and not second_pulse_sent:
-            send_gpio_pulse_start()
-            second_pulse_sent = True
-            second_pulse_end_time = current_time + 0.2  # 200ms 펄스 지속시간
-            print("Second pulse started after 120 seconds")
-
-        # 두 번째 펄스 종료
-        if second_pulse_sent and second_pulse_end_time and current_time >= second_pulse_end_time:
-            send_gpio_pulse_end()
-            second_pulse_end_time = None
-            print("Second pulse ended")
-
-        # GPIO 상태 로깅 (100Hz로)
         data_to_save['gpio_output'].append(get_gpio_output_state())
 
         # 9. Loop time
