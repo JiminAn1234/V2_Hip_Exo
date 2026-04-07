@@ -5,19 +5,14 @@ import pandas as pd
 import tensorrt as trt
 from scipy.signal import butter, filtfilt
 from scipy import signal as sp_signal
+import Jetson.GPIO as GPIO
 
-# from epicpower import actuation, utils
-# from Header_ICM20948_I2C import ICM20948_I2C_IMUs
 from Header_ICM20948_I2C_pcb2 import ICM20948_I2C_IMUs
 from Header_Mocap_trigger import Mocap_trigger
-
-import Jetson.GPIO as GPIO
-import can
 
 from epicpower_tmotorV3.actuator_group import ActuatorGroup
 from epicpower_tmotorV3.tmotor_v3 import TMotorV3
 import HelperFunc as hf
-
 
 # GPIO 설정 (main 함수에서 수행하도록 이동)
 trial_start_sec = 0
@@ -26,25 +21,20 @@ target_time_range = 360
 
 # Trial setting
 subject = 'SUB01'
-trial_name = f'{subject}'  # Change this for different trials\
+body_mass_kg = 72          # kg, Body mass setting
+trial_name = f'{subject}'  # Change this for different trials
 exo_ON = False
 
 # Trigger setting
 trigger_type = "typing"  # "mocap" or "typing"
 
-# Body mass setting
-body_mass_kg = 72 # kg
-
 # Model path
-# trt_engine_path = '/home/metamobility2/Jimin/Trained Models IMUonly_fixed/OpenSim/DEP/OpenSim_ALL_DEP_LG/OpenSim_ALL_DEP_LG.trt'
-# trt_engine_path = '/home/metamobility2/Jimin/Trained Models IMUonly_fixed/OpenSim/DEP/OpenSim_ALL_DEP_RA/OpenSim_ALL_DEP_RA.trt'
-# trt_engine_path = '/home/metamobility2/Jimin/Trained Models IMUonly_fixed/OpenSim/DEP/OpenSim_ALL_DEP_RD/OpenSim_ALL_DEP_RD.trt'
-
 trt_engine_path = '/home/metamobility2/Jimin/Trained Models IMUonly_fixed/OpenSim/DEP/OpenSim_ALL_DEP_LG_0403/OpenSim_ALL_DEP_LG_0403.trt'
 # trt_engine_path = '/home/metamobility2/Jimin/Trained Models IMUonly_fixed/OpenSim/DEP/OpenSim_ALL_DEP_RA_0403/OpenSim_ALL_DEP_RA_0403.trt'
 # trt_engine_path = '/home/metamobility2/Jimin/Trained Models IMUonly_fixed/OpenSim/DEP/OpenSim_ALL_DEP_RD_0403/OpenSim_ALL_DEP_RD_0403.trt'
 
 scale_factor_percent= 20
+
 # desired_delay_ms = 40
 desired_delay_ms = 110
 # desired_delay_ms = 180
@@ -469,7 +459,6 @@ def main():
         filtered_torque_arr[0, -1], zi_R = lpf.realtimeButterworth(delayed_torque_arr[0, -1], zi=zi_R)
         filtered_torque_arr[1, -1], zi_L = lpf.realtimeButterworth(delayed_torque_arr[1, -1], zi=zi_L)
         
-        
         applied_torque_arr = hf.fast_roll(applied_torque_arr)
         applied_torque_arr[:, -1] = filtered_torque_arr[:, -1]
         
@@ -498,7 +487,6 @@ def main():
         
         actual_motor_torque_L = Exo.mtr_comms.get_torque(Exo.CAN_id_L)
         actual_motor_torque_R = -Exo.mtr_comms.get_torque(Exo.CAN_id_R)
-
 
         # GPIO 펄스 로직 추가
         current_time = time.time() - start_time
