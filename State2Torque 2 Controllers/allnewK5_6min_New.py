@@ -5,17 +5,21 @@ import pandas as pd
 import tensorrt as trt
 from scipy.signal import butter, filtfilt
 from scipy import signal as sp_signal
+
 # from epicpower import actuation, utils
 # from Header_ICM20948_I2C import ICM20948_I2C_IMUs
 from Header_ICM20948_I2C_pcb2 import ICM20948_I2C_IMUs
 from Header_Mocap_trigger import Mocap_trigger
+
 import Jetson.GPIO as GPIO
 import can
+
 from epicpower_tmotorV3.actuator_group import ActuatorGroup
 from epicpower_tmotorV3.tmotor_v3 import TMotorV3
+import HelperFunc as hf
+
 
 # GPIO 설정 (main 함수에서 수행하도록 이동)
-output_pin = 7  # Jetson Board Pin 7
 trial_start_sec = 0
 target_duration_sec = 368
 target_time_range = 360
@@ -68,98 +72,8 @@ data_to_save = {
     "gpio_output": []  # GPIO 상태 추가
 }
 
-
 # Global variables
 inference_process, input_q, output_q = None, None, None
-
-# GPIO control functions
-def init_gpio():
-    """Initialize GPIO safely"""
-    try:
-        # First, try to clean up GPIO
-        GPIO.cleanup()
-    except:
-        pass 
-    
-    try:
-        GPIO.setmode(GPIO.BOARD)  # Jetson board numbering scheme
-        GPIO.setup(output_pin, GPIO.OUT, initial=GPIO.LOW)
-        print("GPIO initialized successfully")
-        return True
-    except Exception as e:
-        print(f"Error initializing GPIO: {e}")
-        return False
-
-def send_gpio_pulse_start():
-    """Start a GPIO pulse by setting pin HIGH"""
-    try:
-        GPIO.output(output_pin, GPIO.HIGH)
-        print("GPIO pulse started (HIGH)")
-    except Exception as e:
-        print(f"Error starting GPIO pulse: {e}")
-
-def send_gpio_pulse_end():
-    """End a GPIO pulse by setting pin LOW"""
-    try:
-        GPIO.output(output_pin, GPIO.LOW)
-        print("GPIO pulse ended (LOW)")
-    except Exception as e:
-        print(f"Error ending GPIO pulse: {e}")
-
-def get_gpio_output_state():
-    """Get current GPIO output pin state (0 or 1)"""
-    try:
-        return int(GPIO.input(output_pin))
-    except:
-        # if GPIO not initialized or error occurs
-        return 0
-
-def safe_gpio_cleanup():
-    """GPIO를 안전하게 정리"""
-    try:
-        GPIO.cleanup()
-        print("GPIO cleaned up successfully")
-    except Exception as e:
-        print(f"Error during GPIO cleanup: {e}")
-
-
-# V2 motor based Exo class
-# class Exo:
-#     def __init__(self,):
-
-#         self.CAN_id_L = 1 # NEED TO FIRST IDENTIFY THIS using display_motor_data.py
-#         self.CAN_id_R = 0 # NEED TO FIRST IDENTIFY THIS using display_motor_data.py
-#         self.mtr_type = "AK80-9"
-#         self.control_freq_Hz = 100
-#         self.frame_length = 95  # Window size (in frame)
-
-#         # biotorque parameters
-#         self.scale_factor = scale_factor
-#         self.delay_factor = delay_factor # Number of frames to delay the torque command
-
-#         # note: motors zero themselves when actuation.Motors() runs
-#         _ = input("Press Enter to initialize motors: ")
-#         init_dict = {mtr_id: self.mtr_type for mtr_id in [self.CAN_id_L, self.CAN_id_R]}
-#         self.mtr_comms = actuation.Motors(init_dict)
-
-#         # IMU initialization
-#         self.imus = ICM20948_I2C_IMUs()  # Back, Left hip, Right hip
-
-#         # Specify the CAN interface and channel
-#         try:
-#             self.bus = can.Bus(interface='socketcan', channel='can0')  # Replace 'socketcan' and 'can0' with your actual interface and channel
-#             # print("CAN bus initialized successfully.")
-#         except Exception as e:
-#             print(f"Error initializing CAN bus: {e}")
-#         self.notifier = can.Notifier(self.bus, [])
-
-#     def update_readings(self, CAN_id):
-#         mtr_pos = self.mtr_comms.get_position(CAN_id, degrees=True)
-#         mtr_vel = self.mtr_comms.get_velocity(CAN_id, degrees=True)
-
-#         return mtr_pos, mtr_vel
-
-
 
 class Exo:
     def __init__(self,):
@@ -179,16 +93,11 @@ class Exo:
         # note: motors zero themselves when actuation.Motors() runs
         _ = input("Press Enter to initialize motors: ")
         assert self.mtr_version in (2,3)
-        if self.mtr_version == 2:
-            init_dict = {
-                mtr_id: self.mtr_type for mtr_id in [self.CAN_id_L, self.CAN_id_R]
-            }
-            self.mtr_comms = actuation.Motors(init_dict)
-        elif self.mtr_version == 3:
-            init_list = [
-                TMotorV3(mtr_id, self.mtr_type) for mtr_id in [self.CAN_id_L, self.CAN_id_R]
-            ]
-            self.mtr_comms = ActuatorGroup(init_list)
+
+        init_list = [
+            TMotorV3(mtr_id, self.mtr_type) for mtr_id in [self.CAN_id_L, self.CAN_id_R]
+        ]
+        self.mtr_comms = ActuatorGroup(init_list)
 
         # IMU initialization
         self.imus = ICM20948_I2C_IMUs()  # Back, Left hip, Right hip
@@ -208,119 +117,6 @@ class Exo:
 
         return mtr_pos, mtr_vel, mtr_torque
 
-
-
-
-class lowpass_filter:
-    def __init__(self, order=2, cutoff = 10, fs = 100.0):
-        self.cutoff = cutoff
-        self.fs = fs
-        self.order = order
-        self.nyq = 0.5 * fs
-        self.normal_cutoff = cutoff / self.nyq
-        self.filter_b, self.filter_a = butter(order, self.normal_cutoff, btype='low', analog=False)
-        self.sos = sp_signal.butter(order, cutoff, btype='low', fs=fs, output='sos')
-
-    def apply_lowpass_filter(self, data):
-        
-        filtered_data = np.zeros_like(data)
-
-        if np.all(data == 0):
-            return data
-
-        window_size = data.shape[1]
-        if window_size % 2 == 0:
-            raise ValueError("Window size should be odd number.")
-        half_win = window_size // 2
-
-        for ch in range(data.shape[0]):
-            padded_channel = np.pad(data[ch, :], pad_width=(half_win, half_win), mode='reflect')
-            filtered_padded = filtfilt(self.filter_b, self.filter_a, padded_channel)
-            filtered_data[ch, :] = filtered_padded[half_win:-half_win]
-
-        return filtered_data
-    
-    def causal_filter(self, data, tau=0.1, dt=0.01, y0=None, return_last=False):
-        x = data
-        x = np.asarray(x, dtype=float)
-
-        squeeze_1d = False
-        if x.ndim == 1:
-            x = x[None, :]          # (1, T)
-            squeeze_1d = True
-        elif x.ndim != 2:
-            raise ValueError("data must be 1D or 2D with shape (C, T).")
-
-        C, T = x.shape
-
-
-        alpha = dt / float(tau)
-        alpha = float(np.clip(alpha, 0.0, 1.0))
-
-        # 5) 필터
-        y = np.empty_like(x)
-        if y0 is None:
-            y[:, 0] = x[:, 0]
-        else:
-            y0 = np.asarray(y0, dtype=float).reshape(-1)
-            y[:, 0] = y0.item() if y0.size == 1 else (
-                y0 if y0.size == C else
-                (_ for _ in ()).throw(ValueError(f"y0 must be scalar or length {C}"))
-            )
-        for t in range(1, T):
-            y[:, t] = y[:, t-1] + alpha * (x[:, t] - y[:, t-1])
-        # 6) 반환 모드
-        if return_last:
-            out = y[:, -1]
-            return out.item() if squeeze_1d else out
-        return y.squeeze(0) if squeeze_1d else y
-    
-    def realtimeButterworth(self, data, zi=None, reset=False):
-        """Stateful real-time SOS Butterworth filtering.
-
-        Args:
-            data: scalar or 1D array-like input at current step.
-            zi: optional SOS filter state for this channel. If None, initialize from first input sample.
-            reset: kept for compatibility (no internal shared state is used).
-
-        Returns:
-            filtered_data: filtered output with same shape as input.
-            zf: final SOS state to carry to next call.
-        """
-        x = np.asarray(data, dtype=float)
-        squeeze_out = False
-        if x.ndim == 0:
-            x = x.reshape(1)
-            squeeze_out = True
-        elif x.ndim != 1:
-            raise ValueError("data must be scalar or 1D array")
-
-        if zi is None:
-            zi = sp_signal.sosfilt_zi(self.sos) * x[0]
-
-        y, zf = sp_signal.sosfilt(self.sos, x, zi=zi)
-        if squeeze_out:
-            return y[0], zf
-        return y, zf
-
-
-
-# Fast roll function to shift array elements
-def fast_roll(arr):
-    # For unilateral model
-    if len(arr.shape) == 1:
-        # 1D arr
-        arr[:-1] = arr[1:]
-        arr[-1] = 0
-    elif len(arr.shape) == 2:
-        # 2D arr (e.g. scaled_torque_arr, delayed_torque_arr) (2xframe_length)
-        arr[:, :-1] = arr[:, 1:]
-        arr[:, -1] = 0
-    elif len(arr.shape) == 3:
-        # 3D arr (e.g. model_input_arr) (2x14xframe_length)
-        arr[:, :, :-1] = arr[:, :, 1:]
-        arr[:, :, -1] = 0
-    return arr
 
 # TensorRT inference function
 def trt_inference(input_data, output_shape, context):
@@ -393,23 +189,6 @@ def inference_worker(input_q, output_q, trt_engine_path,
     del runtime
     print("Worker: Exited.")
 
-# Telemetry function for real-time data visualization
-def sendTelemetry(name, value):
-    now = time.time() * 1000
-    msg = name+":"+str(now)+":"+str(value)+"|g"
-    sock.sendto(msg.encode(), teleplotAddr)
-
-def sendBatchTelemetry(data_dict):
-    now = time.time() * 1000
-    try:
-        for name, value in data_dict.items():
-            msg = name + ":" + str(now) + ":" + str(value) + "|g"
-            sock.sendto(msg.encode(), teleplotAddr)
-
-        return True  # Successfully sent
-    except Exception as e:
-        print(f"Error in sendBatchTelemetry: {e}")
-        return False
 
 # Function to save all collected data
 def save_data(start_rec_sec=0, trial_time_sec=None):
@@ -489,7 +268,7 @@ def exit_signal_handler(sig, frame):
 
     save_data(trial_start_sec, target_duration_sec)
     cleanup_can(Exo.bus, Exo.notifier)
-    safe_gpio_cleanup()  # 안전한 GPIO 정리 함수 사용
+    hf.safe_gpio_cleanup()  # 안전한 GPIO 정리 함수 사용
     gc.collect()
     torch.cuda.empty_cache()
 
@@ -511,7 +290,7 @@ def main():
     global inference_process, input_q, output_q
 
     # GPIO 초기화 (안전하게)
-    if not init_gpio():
+    if not hf.init_gpio():
         print("Failed to initialize GPIO. Exiting...")
         return
 
@@ -529,7 +308,7 @@ def main():
     # Initialize the exoskeleton
     Exo = Exo()
     # Initialize lowpass filter
-    lpf = lowpass_filter()
+    lpf = hf.lowpass_filter()
 
     # Initialize queues for multiprocessing
     input_q = mp.Queue()
@@ -562,7 +341,7 @@ def main():
     model_output_l_val = last_model_output_l
 
     # Setting for the exiting process
-    atexit.register(lambda: (cleanup_can(Exo.bus, Exo.notifier), safe_gpio_cleanup()))
+    atexit.register(lambda: (cleanup_can(Exo.bus, Exo.notifier), hf.safe_gpio_cleanup()))
     signal.signal(signal.SIGINT, exit_signal_handler)
 
     # Maria 스타일의 트리거 처리 변수들
@@ -655,7 +434,7 @@ def main():
         right_latest_input = (right_data - current_input_mean) / current_input_std
         left_latest_input = (left_data - current_input_mean) / current_input_std
 
-        model_input_arr = fast_roll(model_input_arr)
+        model_input_arr = hf.fast_roll(model_input_arr)
         model_input_arr[0, :, -1] = right_latest_input
         model_input_arr[1, :, -1] = left_latest_input
 
@@ -680,20 +459,18 @@ def main():
         current_applied_torque = applied_torque_arr[:, -1]
         bio_torque_combined = net_torque_combined - current_applied_torque
 
-        scaled_torque_arr = fast_roll(scaled_torque_arr)
+        scaled_torque_arr = hf.fast_roll(scaled_torque_arr)
         scaled_torque_arr[:, -1] = bio_torque_combined * Exo.scale_factor
 
-        delayed_torque_arr = fast_roll(delayed_torque_arr)
+        delayed_torque_arr = hf.fast_roll(delayed_torque_arr)
         delayed_torque_arr[:, -1] = scaled_torque_arr[:, -Exo.delay_factor-1]
 
-        # filtered_torque_arr = lpf.apply_lowpass_filter(delayed_torque_arr)
-        # filtered_torque_arr = lpf.causal_filter(delayed_torque_arr, tau=0.1)
-        filtered_torque_arr = fast_roll(filtered_torque_arr)
+        filtered_torque_arr = hf.fast_roll(filtered_torque_arr)
         filtered_torque_arr[0, -1], zi_R = lpf.realtimeButterworth(delayed_torque_arr[0, -1], zi=zi_R)
         filtered_torque_arr[1, -1], zi_L = lpf.realtimeButterworth(delayed_torque_arr[1, -1], zi=zi_L)
         
         
-        applied_torque_arr = fast_roll(applied_torque_arr)
+        applied_torque_arr = hf.fast_roll(applied_torque_arr)
         applied_torque_arr[:, -1] = filtered_torque_arr[:, -1]
         
         # 7. Send the torque command to the motors        
@@ -728,27 +505,27 @@ def main():
         
         # 첫 번째 펄스
         if current_time >= 3 and not first_pulse_sent:
-            send_gpio_pulse_start()
+            hf.send_gpio_pulse_start()
             first_pulse_sent = True
             first_pulse_end_time = current_time + 0.2  # 200ms 펄스 지속시간
             print("First pulse started 2 seconds after mocap trigger")
         
         # 첫 번째 펄스 종료
         if first_pulse_sent and first_pulse_end_time and current_time >= first_pulse_end_time:
-            send_gpio_pulse_end()
+            hf.send_gpio_pulse_end()
             first_pulse_end_time = None
             print("First pulse ended")
         
         # 두 번째 펄스
         if current_time >= (3+ target_time_range) and not second_pulse_sent:
-            send_gpio_pulse_start()
+            hf.send_gpio_pulse_start()
             second_pulse_sent = True
             second_pulse_end_time = current_time + 0.2  # 200ms 펄스 지속시간
             print("Second pulse started after 120 seconds")
 
         # 두 번째 펄스 종료
         if second_pulse_sent and second_pulse_end_time and current_time >= second_pulse_end_time:
-            send_gpio_pulse_end()
+            hf.send_gpio_pulse_end()
             second_pulse_end_time = None
             print("Second pulse ended")
 
@@ -780,7 +557,7 @@ def main():
         data_to_save['actual_torque_R'].append(actual_motor_torque_R)            
         data_to_save['actual_torque_L'].append(actual_motor_torque_L)        
         
-        data_to_save['gpio_output'].append(get_gpio_output_state())
+        data_to_save['gpio_output'].append(hf.get_gpio_output_state())
 
         # 9. Loop time
         time_0 = time.time()
@@ -797,7 +574,7 @@ def main():
             # "pos_R": -current_pos_R,
             # "pos_L": current_pos_L,
 
-            "gpio_output": get_gpio_output_state(),
+            "gpio_output": hf.get_gpio_output_state(),
 
             "output_R": model_output_combined[0],
             "output_L": model_output_combined[1],
@@ -818,7 +595,7 @@ def main():
             # "imu_R_Acc_X": local_r_data[0],
             # "imu_P_Acc_X": local_p_data[0]
         }
-        sendBatchTelemetry(telemetry_data)
+        hf.sendBatchTelemetry(telemetry_data)
 
         # 11. Wait for the time to reach the next clock cycle
         if (time.time() - start_time) > (start_index / Exo.control_freq_Hz):
@@ -834,11 +611,6 @@ if __name__ == '__main__':
     # Garbage collection
     gc.collect()
     torch.cuda.empty_cache()
-
-    # Teleplot setting
-    os.system('echo nc -u -w0 127.0.0.1 47269')
-    teleplotAddr = ("127.0.0.1", 47269)
-    sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
 
     if trigger_type == "mocap":
         mocap_trigger = Mocap_trigger(server_ip="172.24.44.177", port_number=10)
