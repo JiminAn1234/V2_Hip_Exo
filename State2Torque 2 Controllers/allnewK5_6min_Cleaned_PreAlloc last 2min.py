@@ -18,7 +18,7 @@ import HelperFunc as hf
 trial_start_sec = 0
 target_duration_sec = 368
 target_time_range = 360
-collect_last_sec = 120
+collect_last_sec = 125
 
 # Trial setting
 subject = 'SUB01'
@@ -27,7 +27,8 @@ trial_name = f'{subject}'  # Change this for different trials
 exo_ON = False
 
 # Trigger setting
-trigger_type = "typing"  # "mocap" or "typing"
+trigger_type = "mocap"  # "mocap" or "typing"
+telemetry_target_hz = 50
 
 # Model path
 trt_engine_path = '/home/metamobility2/Jimin/Trained Models IMUonly_fixed/OpenSim/DEP/OpenSim_ALL_DEP_LG_0403/OpenSim_ALL_DEP_LG_0403.trt'
@@ -114,19 +115,15 @@ class Exo:
         return mtr_pos, mtr_vel, mtr_torque
 
 
-# TensorRT inference function
-def trt_inference(input_data, output_shape, context):
-    # Use torch.tensor(...) and torch.empty(...) completely on CUDA:
-    d_input = torch.tensor(input_data, dtype=torch.float32, device='cuda')
-    d_output = torch.empty(*output_shape, dtype=torch.float32, device='cuda')
+# TensorRT inference function using preallocated GPU buffers
+def trt_inference(input_data, context, d_input, d_output):
+    src = torch.from_numpy(input_data).to(dtype=torch.float32)
+    d_input.copy_(src, non_blocking=True)
 
-    # Prepare bindings
     bindings = [int(d_input.data_ptr()), int(d_output.data_ptr())]
-
     context.execute_v2(bindings=bindings)
 
-    output = d_output.cpu().numpy()
-    return output
+    return float(d_output.item())
 
 # Inference worker function for multiprocessing
 def inference_worker(input_q, output_q, trt_engine_path,
@@ -152,10 +149,12 @@ def inference_worker(input_q, output_q, trt_engine_path,
     label_mean = np.load(label_mean_path).astype(np.float32)
     label_std = np.load(label_std_path).astype(np.float32)
 
+    d_input = torch.empty((1, num_input_features, frame_length), dtype=torch.float32, device='cuda')
+    d_output = torch.empty((1,), dtype=torch.float32, device='cuda')
+
     dummy_input_data = np.zeros((1, num_input_features, frame_length), dtype=np.float32)
-    dummy_output_shape = (1,)
     for _ in range(10):
-        _ = trt_inference(dummy_input_data, dummy_output_shape, context)
+        _ = trt_inference(dummy_input_data, context, d_input, d_output)
     print("TensorRT engine warmed up.\nTrigger the trial to start...")
 
     while True:
@@ -168,13 +167,12 @@ def inference_worker(input_q, output_q, trt_engine_path,
             model_input_r_arr, model_input_l_arr = data_in
 
             # Right Model Inferencing
-            output_shape = (1,)  # Assuming scalar output from model
-            model_output_r_norm = trt_inference(model_input_r_arr, output_shape, context)
-            model_output_r = model_output_r_norm * label_std + label_mean
+            model_output_r_norm = trt_inference(model_input_r_arr, context, d_input, d_output)
+            model_output_r = np.array([model_output_r_norm], dtype=np.float32) * label_std + label_mean
 
             # Left Model Inferencing
-            model_output_l_norm = trt_inference(model_input_l_arr, output_shape, context)
-            model_output_l = model_output_l_norm * label_std + label_mean
+            model_output_l_norm = trt_inference(model_input_l_arr, context, d_input, d_output)
+            model_output_l = np.array([model_output_l_norm], dtype=np.float32) * label_std + label_mean
 
             output_q.put((model_output_r, model_output_l))
         except Exception as e:
@@ -363,6 +361,7 @@ def main():
     start_index = 1
     zi_R = None
     zi_L = None
+    telemetry_every_n = max(1, int(round(Exo.control_freq_Hz / telemetry_target_hz)))
     
     # Wait for the trigger to start the trial (Maria 스타일로 변경)
     if trigger_type == "mocap":
@@ -595,11 +594,12 @@ def main():
             "filtered_torque_R": filtered_torque_arr[0, -1],
             "filtered_torque_L": filtered_torque_arr[1, -1],
         }
-        hf.sendBatchTelemetry(telemetry_data)
+        if (start_index % telemetry_every_n) == 0:
+            hf.sendBatchTelemetry(telemetry_data)
 
         # 11. Wait for the time to reach the next clock cycle
         if (time.time() - start_time) > (start_index / Exo.control_freq_Hz):
-            print("Loop time exceeded: ", (time.time() - start_time) - (start_index / Exo.control_freq_Hz))
+            print(f"Loop time exceeded: {((time.time() - start_time) - (start_index / Exo.control_freq_Hz)):.6f}")
         else:
             while (time.time() - start_time) < (start_index / Exo.control_freq_Hz):
                 pass
