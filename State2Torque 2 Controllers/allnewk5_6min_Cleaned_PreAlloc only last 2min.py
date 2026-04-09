@@ -1,3 +1,4 @@
+from multiprocessing import context
 import time, dataclasses, enum, signal, os, atexit, socket, can, torch, gc
 import multiprocessing as mp
 import numpy as np
@@ -18,6 +19,8 @@ import HelperFunc as hf
 trial_start_sec = 0
 target_duration_sec = 368
 target_time_range = 360
+save_window_start_sec = 240
+save_window_duration_sec = 125
 
 # Trial setting
 subject = 'SUB01'
@@ -27,13 +30,14 @@ exo_ON = False
 
 # Trigger setting
 trigger_type = "typing"  # "mocap" or "typing"
+telemetry_target_hz = 50
 
 # Model path
 trt_engine_path = '/home/metamobility2/Jimin/Trained Models IMUonly_fixed/OpenSim/DEP/OpenSim_ALL_DEP_LG_0403/OpenSim_ALL_DEP_LG_0403.trt'
 # trt_engine_path = '/home/metamobility2/Jimin/Trained Models IMUonly_fixed/OpenSim/DEP/OpenSim_ALL_DEP_RA_0403/OpenSim_ALL_DEP_RA_0403.trt'
 # trt_engine_path = '/home/metamobility2/Jimin/Trained Models IMUonly_fixed/OpenSim/DEP/OpenSim_ALL_DEP_RD_0403/OpenSim_ALL_DEP_RD_0403.trt'
 
-scale_factor_percent= 0
+scale_factor_percent= 20
 
 # desired_delay_ms = 40
 desired_delay_ms = 110
@@ -113,15 +117,31 @@ class Exo:
         return mtr_pos, mtr_vel, mtr_torque
 
 
-# TensorRT inference function using preallocated GPU buffers
-def trt_inference(input_data, context, d_input, d_output):
-    src = torch.from_numpy(input_data).to(dtype=torch.float32)
-    d_input.copy_(src, non_blocking=True)
+# TensorRT inference function
+def trt_inference(input_data, output_shape, context):
+    # Use torch.tensor(...) and torch.empty(...) completely on CUDA:
+    d_input = torch.tensor(input_data, dtype=torch.float32, device='cuda')
+    d_output = torch.empty(*output_shape, dtype=torch.float32, device='cuda')
 
+    # Prepare bindings
     bindings = [int(d_input.data_ptr()), int(d_output.data_ptr())]
+
     context.execute_v2(bindings=bindings)
 
-    return float(d_output.item())
+    output = d_output.cpu().numpy()
+    return output
+
+# def trt_inference_reuse(input_data, context, d_input, d_output):
+    
+#     src = torch.from_numpy(input_data).to(dtype=torch.float32)
+    
+#     d_input.copy_(src, non_blocking=True)
+    
+#     bindings = [int(d_input.data_ptr()), int(d_output.data_ptr())]
+    
+#     context.execute_v2(bindings=bindings)
+    
+#     return float(d_output.item())
 
 # Inference worker function for multiprocessing
 def inference_worker(input_q, output_q, trt_engine_path,
@@ -147,12 +167,18 @@ def inference_worker(input_q, output_q, trt_engine_path,
     label_mean = np.load(label_mean_path).astype(np.float32)
     label_std = np.load(label_std_path).astype(np.float32)
 
-    d_input = torch.empty((1, num_input_features, frame_length), dtype=torch.float32, device='cuda')
-    d_output = torch.empty((1,), dtype=torch.float32, device='cuda')
+    # d_input = torch.empty((1, num_input_features, frame_length), dtype=torch.float32, device="cuda")
+    # d_output = torch.empty((1,), dtype=torch.float32, device="cuda")
 
+    # for _ in range(10):
+    #     _ = trt_inference_reuse(dummy_input_data, context, d_input, d_output)
+    #     print("TensorRT engine warmed up.\nTrigger the trial to start...")
+    
+    
     dummy_input_data = np.zeros((1, num_input_features, frame_length), dtype=np.float32)
+    dummy_output_shape = (1,)
     for _ in range(10):
-        _ = trt_inference(dummy_input_data, context, d_input, d_output)
+        _ = trt_inference(dummy_input_data, dummy_output_shape, context)
     print("TensorRT engine warmed up.\nTrigger the trial to start...")
 
     while True:
@@ -165,12 +191,19 @@ def inference_worker(input_q, output_q, trt_engine_path,
             model_input_r_arr, model_input_l_arr = data_in
 
             # Right Model Inferencing
-            model_output_r_norm = trt_inference(model_input_r_arr, context, d_input, d_output)
-            model_output_r = np.array([model_output_r_norm], dtype=np.float32) * label_std + label_mean
+            output_shape = (1,)  # Assuming scalar output from model
+            model_output_r_norm = trt_inference(model_input_r_arr, output_shape, context)
+            model_output_r = model_output_r_norm * label_std + label_mean
 
             # Left Model Inferencing
-            model_output_l_norm = trt_inference(model_input_l_arr, context, d_input, d_output)
-            model_output_l = np.array([model_output_l_norm], dtype=np.float32) * label_std + label_mean
+            model_output_l_norm = trt_inference(model_input_l_arr, output_shape, context)
+            model_output_l = model_output_l_norm * label_std + label_mean
+
+            # model_output_r_norm = trt_inference_reuse(model_input_r_arr, context, d_input, d_output)
+            # model_output_r = np.array([model_output_r_norm], dtype=np.float32) * label_std + label_mean
+
+            # model_output_l_norm = trt_inference_reuse(model_input_l_arr, context, d_input, d_output)
+            # model_output_l = np.array([model_output_l_norm], dtype=np.float32) * label_std + label_mean
 
             output_q.put((model_output_r, model_output_l))
         except Exception as e:
@@ -197,19 +230,18 @@ def save_data(start_rec_sec=0, trial_time_sec=None, valid_len=None):
     if valid_len == 0:
         print("ERROR: No data collected! valid_len is 0")
         return
-    
-    # Calculate start and end indices for slicing
-    start_idx = int(start_rec_sec * 100)  # 100 Hz data collection rate
+
+    # Data in buffer is already from the desired absolute window.
+    start_idx = 0
     end_idx = valid_len
-    
-    if trial_time_sec:
-        end_idx = min(valid_len, int((start_rec_sec + trial_time_sec) * 100))
-    
-    print(f'Slicing data from {start_rec_sec}s to {(start_rec_sec + (trial_time_sec or (valid_len/100 - start_rec_sec)))}s')
+
+    print(f'Slicing collected window: {start_idx} to {end_idx}')
     print(f'Index range: {start_idx} to {end_idx}')
 
     # Slice data with start offset
-    timestamp_sliced = [t - start_rec_sec for t in data_to_save["timestamp"][start_idx:end_idx]]
+    ts = data_to_save["timestamp"][start_idx:end_idx]
+    t0 = ts[0] if len(ts) > 0 else 0.0
+    timestamp_sliced = [t - t0 for t in ts]
     sliced_data = {k: v[start_idx:end_idx] if k.startswith('mtr') or k.startswith('model_output') or k.startswith('net_torque') or k.startswith('bio_torque') or k.startswith('scaled_torque') or k.startswith('delayed_torque') or k.startswith('filtered_torque') or k.startswith('applied_torque') or k.startswith('actual_torque') or k == 'gpio_output' else v[start_idx:end_idx, :] if k.startswith('imu') else None for k, v in data_to_save.items()}
     sliced_data['time'] = timestamp_sliced
 
@@ -255,7 +287,7 @@ def exit_signal_handler(sig, frame):
     Exo.mtr_comms.set_torque(Exo.CAN_id_L, 0)
     Exo.mtr_comms.set_torque(Exo.CAN_id_R, 0)
 
-    save_data(trial_start_sec, target_duration_sec, valid_len=logged_samples)
+    save_data(valid_len=logged_samples)
     cleanup_can(Exo.bus, Exo.notifier)
     hf.safe_gpio_cleanup()  # 안전한 GPIO 정리 함수 사용
     gc.collect()
@@ -297,7 +329,7 @@ def main():
     # Initialize the exoskeleton
     Exo = Exo()
     
-    max_samples = int((target_duration_sec + 5) * Exo.control_freq_Hz)
+    max_samples = int(save_window_duration_sec * Exo.control_freq_Hz)
     data_to_save = init_data_buffers(max_samples)
     logged_samples = 0
 
@@ -346,6 +378,8 @@ def main():
     second_pulse_end_time = None
     start_time = None
     start_index = 1
+    collect_started = False
+    telemetry_every_n = max(1, int(round(Exo.control_freq_Hz / telemetry_target_hz)))
     zi_R = None
     zi_L = None
     
@@ -375,11 +409,16 @@ def main():
         if not logging_started:
             continue
 
-        if logged_samples >= max_samples:
-            print("Buffer full. Stopping logging loop.")
+        current_time = time.time() - start_time
+        if (not collect_started) and (current_time >= save_window_start_sec):
+            collect_started = True
+            print(f"Data collection started at {current_time:.2f}s")
+
+        if collect_started and logged_samples >= max_samples:
+            print("Collection window complete. Stopping logging loop.")
             break
 
-        idx = logged_samples
+        idx = logged_samples if collect_started else None
 
         # 1. Read the motor encoder values
         time_1 = time.time()
@@ -403,12 +442,13 @@ def main():
         local_l_data = imu_dict["IMU_THIGH_LEFT"]
         local_r_data = imu_dict["IMU_THIGH_RIGHT"]
 
-        data_to_save['mtr_pos_L'][idx] = current_pos_L; data_to_save['mtr_pos_R'][idx] = -current_pos_R
-        data_to_save['mtr_vel_L'][idx] = current_vel_L; data_to_save['mtr_vel_R'][idx] = -current_vel_R
+        if collect_started:
+            data_to_save['mtr_pos_L'][idx] = current_pos_L; data_to_save['mtr_pos_R'][idx] = -current_pos_R
+            data_to_save['mtr_vel_L'][idx] = current_vel_L; data_to_save['mtr_vel_R'][idx] = -current_vel_R
 
-        data_to_save['imu_P'][idx, :] = local_p_data
-        data_to_save['imu_L'][idx, :] = local_l_data
-        data_to_save['imu_R'][idx, :] = local_r_data
+            data_to_save['imu_P'][idx, :] = local_p_data
+            data_to_save['imu_L'][idx, :] = local_l_data
+            data_to_save['imu_R'][idx, :] = local_r_data
 
         # 3. Mirror the left data to the right side
         p_data_reflected = local_p_data.copy()
@@ -493,8 +533,6 @@ def main():
         actual_motor_torque_R = -Exo.mtr_comms.get_torque(Exo.CAN_id_R)
 
         # GPIO 펄스 로직 추가
-        current_time = time.time() - start_time
-        
         # 첫 번째 펄스
         if current_time >= 3 and not first_pulse_sent:
             hf.send_gpio_pulse_start()
@@ -522,34 +560,35 @@ def main():
             print("Second pulse ended")
 
         # 8. Stack the data (that will be saved after the trial)
-        data_to_save['mtr_cmd_R'][idx] = motor_cmd_val_R
-        data_to_save['mtr_cmd_L'][idx] = motor_cmd_val_L
+        if collect_started:
+            data_to_save['mtr_cmd_R'][idx] = motor_cmd_val_R
+            data_to_save['mtr_cmd_L'][idx] = motor_cmd_val_L
 
-        data_to_save['model_output_R'][idx] = model_output_combined[0]
-        data_to_save['model_output_L'][idx] = model_output_combined[1]
+            data_to_save['model_output_R'][idx] = model_output_combined[0]
+            data_to_save['model_output_L'][idx] = model_output_combined[1]
 
-        data_to_save['net_torque_R'][idx] = net_torque_combined[0]
-        data_to_save['net_torque_L'][idx] = net_torque_combined[1]
+            data_to_save['net_torque_R'][idx] = net_torque_combined[0]
+            data_to_save['net_torque_L'][idx] = net_torque_combined[1]
 
-        data_to_save['bio_torque_R'][idx] = bio_torque_combined[0]
-        data_to_save['bio_torque_L'][idx] = bio_torque_combined[1]
+            data_to_save['bio_torque_R'][idx] = bio_torque_combined[0]
+            data_to_save['bio_torque_L'][idx] = bio_torque_combined[1]
 
-        data_to_save['scaled_torque_R'][idx] = scaled_torque_arr[0, -1]
-        data_to_save['scaled_torque_L'][idx] = scaled_torque_arr[1, -1]
+            data_to_save['scaled_torque_R'][idx] = scaled_torque_arr[0, -1]
+            data_to_save['scaled_torque_L'][idx] = scaled_torque_arr[1, -1]
 
-        data_to_save['delayed_torque_R'][idx] = delayed_torque_arr[0, -1]
-        data_to_save['delayed_torque_L'][idx] = delayed_torque_arr[1, -1]
+            data_to_save['delayed_torque_R'][idx] = delayed_torque_arr[0, -1]
+            data_to_save['delayed_torque_L'][idx] = delayed_torque_arr[1, -1]
 
-        data_to_save['filtered_torque_R'][idx] = filtered_torque_arr[0, -1]
-        data_to_save['filtered_torque_L'][idx] = filtered_torque_arr[1, -1]
+            data_to_save['filtered_torque_R'][idx] = filtered_torque_arr[0, -1]
+            data_to_save['filtered_torque_L'][idx] = filtered_torque_arr[1, -1]
 
-        data_to_save['applied_torque_R'][idx] = applied_torque_arr[0, -1]
-        data_to_save['applied_torque_L'][idx] = applied_torque_arr[1, -1]
+            data_to_save['applied_torque_R'][idx] = applied_torque_arr[0, -1]
+            data_to_save['applied_torque_L'][idx] = applied_torque_arr[1, -1]
 
-        data_to_save['actual_torque_R'][idx] = actual_motor_torque_R
-        data_to_save['actual_torque_L'][idx] = actual_motor_torque_L
+            data_to_save['actual_torque_R'][idx] = actual_motor_torque_R
+            data_to_save['actual_torque_L'][idx] = actual_motor_torque_L
 
-        data_to_save['gpio_output'][idx] = float(hf.get_gpio_output_state())
+            data_to_save['gpio_output'][idx] = float(hf.get_gpio_output_state())
 
         # 9. Loop time
         time_0 = time.time()
@@ -584,7 +623,8 @@ def main():
             "filtered_torque_R": filtered_torque_arr[0, -1],
             "filtered_torque_L": filtered_torque_arr[1, -1],
         }
-        hf.sendBatchTelemetry(telemetry_data)
+        if (start_index % telemetry_every_n) == 0:
+            hf.sendBatchTelemetry(telemetry_data)
 
         # 11. Wait for the time to reach the next clock cycle
         if (time.time() - start_time) > (start_index / Exo.control_freq_Hz):
@@ -592,13 +632,14 @@ def main():
         else:
             while (time.time() - start_time) < (start_index / Exo.control_freq_Hz):
                 pass
-        data_to_save['timestamp'][idx] = time.time() - start_time
+        if collect_started:
+            data_to_save['timestamp'][idx] = time.time() - start_time
+            logged_samples += 1
         start_index += 1
-        logged_samples += 1
 
-        # if (time.time() - start_time) >= target_duration_sec:
-        #     print("Target duration reached. Stopping trial.")
-        #     break
+        if (time.time() - start_time) >= target_duration_sec:
+            print("Target duration reached. Stopping trial.")
+            break
 
 if __name__ == '__main__':
 

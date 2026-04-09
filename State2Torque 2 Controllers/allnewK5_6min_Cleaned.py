@@ -593,6 +593,10 @@ def main():
                 pass
         data_to_save['timestamp'].append(time.time()-start_time)
         start_index += 1
+        
+        if (time.time() - start_time) >= target_duration_sec:
+            print("Target duration reached. Stopping trial.")
+            break
 
 if __name__ == '__main__':
 
