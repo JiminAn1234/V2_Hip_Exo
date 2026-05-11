@@ -205,8 +205,11 @@ def pt_to_trt(pt_model_path, trt_engine_path, hyperparam_config, fp16_mode=False
 
 # trt_engine = f'/home/metamobility2/Jimin/Trained Models IMUonly_fixed/OpenSim/DEP/OpenSim_{subject}_DEP/OpenSim_{subject}_DEP.trt'
 
-pt_model = '/home/metamobility2/Jimin/Trained Models IMUonly_fixed/OpenSim/DEP/OpenSim_ALL_DEP_LGRD/OpenSim_ALL_DEP_LGRD.pt'
-trt_engine = '/home/metamobility2/Jimin/Trained Models IMUonly_fixed/OpenSim/DEP/OpenSim_ALL_DEP_LGRD/OpenSim_ALL_DEP_LGRD.trt'
+# pt_model = '/home/metamobility2/Jimin/Trained Models IMUonly_fixed/OpenSim/DEP/OpenSim_ALL_DEP_LG_0403/OpenSim_ALL_DEP_LG_0403.pt'
+# trt_engine = '/home/metamobility2/Jimin/Trained Models IMUonly_fixed/OpenSim/DEP/OpenSim_ALL_DEP_LG_0403/OpenSim_ALL_DEP_LG_0403.trt'
+
+pt_model = '/home/metamobility2/Jimin/Trained Models IMUonly_fixed/OpenSim/DEP/OpenSim_ALL_DEP_RD_0403/OpenSim_ALL_DEP_RD_0403.pt'
+trt_engine = '/home/metamobility2/Jimin/Trained Models IMUonly_fixed/OpenSim/DEP/OpenSim_ALL_DEP_RD_0403/OpenSim_ALL_DEP_RD_0403.trt'
 
 # Base hyperparameters
 hyperparam_config = {

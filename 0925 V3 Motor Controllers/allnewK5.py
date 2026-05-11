@@ -22,7 +22,7 @@ output_pin = 7  # Jetson Board Pin 7
 
 # Trial setting
 # subject = 'OS_Test'  # Change this for different subjects
-subject = 'AB02'
+subject = 'AB18'
 trial_name = f'{subject}_Test'  # Change this for different trials
 trial_start_sec = 5
 target_duration_sec = 125
@@ -33,16 +33,20 @@ exo_ON = True
 trigger_type = "mocap"  # "mocap" or "typing"
 
 # Body mass setting
-body_mass_kg = 60.5 # kg
+body_mass_kg = 72 # kg
 
 # Model path
-trt_engine_path = '/home/metamobility2/Jimin/Trained Models IMUonly_fixed/OpenSim/DEP/OpenSim_ALL_DEP_LG/OpenSim_ALL_DEP_LG.trt'
+# trt_engine_path = '/home/metamobility2/Jimin/Trained Models IMUonly_fixed/OpenSim/DEP/OpenSim_ALL_DEP_LG/OpenSim_ALL_DEP_LG.trt'
 # trt_engine_path = '/home/metamobility2/Jimin/Trained Models IMUonly_fixed/OpenSim/DEP/OpenSim_ALL_DEP_RA/OpenSim_ALL_DEP_RA.trt'
 # trt_engine_path = '/home/metamobility2/Jimin/Trained Models IMUonly_fixed/OpenSim/DEP/OpenSim_ALL_DEP_RD/OpenSim_ALL_DEP_RD.trt'
 
+# trt_engine_path = '/home/metamobility2/Jimin/Trained Models IMUonly_fixed/OpenSim/DEP/OpenSim_ALL_DEP_LG_0403/OpenSim_ALL_DEP_LG_0403.trt'
+# trt_engine_path = '/home/metamobility2/Jimin/Trained Models IMUonly_fixed/OpenSim/DEP/OpenSim_ALL_DEP_RA_0403/OpenSim_ALL_DEP_RA_0403.trt'
+trt_engine_path = '/home/metamobility2/Jimin/Trained Models IMUonly_fixed/OpenSim/DEP/OpenSim_ALL_DEP_RD_0403/OpenSim_ALL_DEP_RD_0403.trt'
 
-scale_factor_percent= 0
-desired_delay_ms = 30
+
+scale_factor_percent= 20
+desired_delay_ms = 170
 
 scale_factor = scale_factor_percent/100
 delay_factor = int(desired_delay_ms/10 - 3)
@@ -774,23 +778,26 @@ def main():
         
         # 10. Send telemetry data
         telemetry_data = {
+            "loop_time": loop_time,
+            "inference_time": time_4 - time_3,
+            
             "mtr_cmd_R": motor_cmd_val_R,
             "mtr_cmd_L": motor_cmd_val_L,
+            
+            "actual_torque_R": actual_motor_torque_R,
+            "actual_torque_L": actual_motor_torque_L,
+            
+            # "pos_R": -current_pos_R,
+            # "pos_L": current_pos_L,
 
             "gpio_output": get_gpio_output_state(),
 
             "output_R": model_output_combined[0],
             "output_L": model_output_combined[1],
-
-            "actual_torque_R": actual_motor_torque_R,
-            "actual_torque_L": actual_motor_torque_L,
-            
-            "pos_R": -current_pos_R,
-            "pos_L": current_pos_L,
             
             "scaled_torque_R": scaled_torque_arr[0, -1],
             "scaled_torque_L": scaled_torque_arr[1, -1],
-                        
+            
             "delayed_torque_R": delayed_torque_arr[0, -1],
             "delayed_torque_L": delayed_torque_arr[1, -1],
             

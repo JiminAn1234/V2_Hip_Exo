@@ -21,7 +21,7 @@ output_pin = 7  # Jetson Board Pin 7
 
 # Trial setting
 # subject = 'OS_Test'  # Change this for different subjects
-subject = 'AB16'
+subject = 'AB08'
 trial_name = f'{subject}_DEP'  # Change this for different trials
 trial_start_sec = 5
 target_duration_sec = 125
