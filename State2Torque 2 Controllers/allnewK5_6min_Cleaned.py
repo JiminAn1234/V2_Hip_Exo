@@ -553,6 +553,10 @@ def main():
         
         # 10. Send telemetry data
         telemetry_data = {
+            "time": time.time() - start_time,
+            "loop_time": loop_time,
+            "inference_time": time_4 - time_3,
+            
             "mtr_cmd_R": motor_cmd_val_R,
             "mtr_cmd_L": motor_cmd_val_L,
             
@@ -560,7 +564,7 @@ def main():
             "actual_torque_L": actual_motor_torque_L,
             
             # "pos_R": -current_pos_R,
-            # "pos_L": current_pos_L,
+            # "pos_L": current_pos_L,s
 
             "gpio_output": hf.get_gpio_output_state(),
 
@@ -575,13 +579,6 @@ def main():
             
             "filtered_torque_R": filtered_torque_arr[0, -1],
             "filtered_torque_L": filtered_torque_arr[1, -1],
-            
-            # "loop_time": loop_time,
-            # "inference_time": time_4 - time_3,
-            
-            # "imu_L_Acc_X": local_l_data[0],
-            # "imu_R_Acc_X": local_r_data[0],
-            # "imu_P_Acc_X": local_p_data[0]
         }
         hf.sendBatchTelemetry(telemetry_data)
 

@@ -19,14 +19,14 @@ import HelperFunc as hf
 trial_start_sec = 0
 target_duration_sec = 368
 target_time_range = 360
-save_window_start_sec = 240
-save_window_duration_sec = 128
+save_window_start_sec = 180
+save_window_duration_sec = target_duration_sec - save_window_start_sec
 
 # Trial setting
 subject = 'SUB01'
-body_mass_kg = 72          # kg, Body mass setting
+body_mass_kg = 83.6          # kg, Body mass setting
 trial_name = f'{subject}'  # Change this for different trials
-exo_ON = False
+exo_ON = True
 
 # Trigger setting
 trigger_type = "mocap"  # "mocap" or "typing"
@@ -39,8 +39,8 @@ trt_engine_path = '/home/metamobility2/Jimin/Trained Models IMUonly_fixed/OpenSi
 
 scale_factor_percent= 20
 
-# desired_delay_ms = 40
-desired_delay_ms = 110
+desired_delay_ms = 40
+# desired_delay_ms = 110
 # desired_delay_ms = 180
 # desired_delay_ms = 250
 # desired_delay_ms = 320
@@ -509,7 +509,7 @@ def main():
             hf.send_gpio_pulse_start()
             first_pulse_sent = True
             first_pulse_end_time = current_time + 0.2  # 200ms 펄스 지속시간
-            print("First pulse started 2 seconds after mocap trigger")
+            print("First pulse started 3 seconds after mocap trigger")
         
         # 첫 번째 펄스 종료
         if first_pulse_sent and first_pulse_end_time and current_time >= first_pulse_end_time:
@@ -522,7 +522,7 @@ def main():
             hf.send_gpio_pulse_start()
             second_pulse_sent = True
             second_pulse_end_time = current_time + 0.2  # 200ms 펄스 지속시간
-            print("Second pulse started after 120 seconds")
+            print(f"Second pulse started after {target_time_range} seconds")
 
         # 두 번째 펄스 종료
         if second_pulse_sent and second_pulse_end_time and current_time >= second_pulse_end_time:
@@ -567,7 +567,9 @@ def main():
         
         # 10. Send telemetry data
         telemetry_data = {
-            "time": time.time() - start_time,
+            "gpio_output": hf.get_gpio_output_state(),
+            
+            # "time": time.time() - start_time,
             "loop_time": loop_time,
             "inference_time": time_4 - time_3,
             
@@ -577,10 +579,8 @@ def main():
             "actual_torque_R": actual_motor_torque_R,
             "actual_torque_L": actual_motor_torque_L,
             
-            # "pos_R": -current_pos_R,
-            # "pos_L": current_pos_L,s
-
-            "gpio_output": hf.get_gpio_output_state(),
+            "pos_R": -current_pos_R,
+            "pos_L": current_pos_L,
 
             "output_R": model_output_combined[0],
             "output_L": model_output_combined[1],

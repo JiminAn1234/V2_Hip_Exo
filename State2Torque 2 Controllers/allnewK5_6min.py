@@ -26,7 +26,7 @@ trial_name = f'{subject}'  # Change this for different trials\
 exo_ON = False
 
 # Trigger setting
-trigger_type = "typing"  # "mocap" or "typing"
+trigger_type = "mocap"  # "mocap" or "typing"
 
 # Body mass setting
 body_mass_kg = 72 # kg
